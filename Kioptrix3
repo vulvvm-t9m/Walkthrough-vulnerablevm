@@ -104,6 +104,7 @@ cat CompanyPolicy.README
 Check sudoers file permissions and content:
 
 bash
+export TERM=xterm 
 
 ls -lh /etc/sudoers
 cat /etc/sudoers
